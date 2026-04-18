@@ -27,7 +27,8 @@ import {
 } from "./constants.js";
 import {getEmailAddress, getEmailVerificationCode, MAILBOX_CONFIG} from "./mailbox.js";
 import {fetchSentinelToken} from "./sentinel.js";
-import {pkceCodeChallenge, randomUrlSafeString,} from "./utils.js";
+import { pkceCodeChallenge, randomUrlSafeString } from "./utils.js";
+import {ISMSActivationBroker} from "./sms/activation-broker.js";
 
 type FetchLike = typeof fetch;
 
@@ -193,6 +194,7 @@ export interface OpenAIClientOptions {
     deviceProfile?: DeviceProfile;
     manualMode?: boolean;
     signupScreenHint?: string;
+    smsBroker?: ISMSActivationBroker
 }
 
 export class OpenAIClient {
@@ -208,8 +210,10 @@ export class OpenAIClient {
     state = "";
     codeVerifier = "";
     deviceID = "";
+    readonly smsBroker?: ISMSActivationBroker
 
     constructor(options: OpenAIClientOptions) {
+        this.smsBroker = options.smsBroker;
         this.email = options.email?.trim() ?? "";
         this.password = options.password;
         this.deviceProfile = options.deviceProfile
@@ -232,7 +236,7 @@ export class OpenAIClient {
             this.fetchWithRetry(cookieFetch, input, init)) as FetchLike;
     }
 
-    private logProgress(current: number, total: number, message: string): void {
+    private logProgress(current: number | string, total: number, message: string): void {
         console.log(`[${current}/${total}] ${message}`);
     }
 
@@ -292,6 +296,26 @@ export class OpenAIClient {
         if (continueURL === `${AUTH_BASE_URL}/email-verification`) {
             this.logProgress(4, totalSteps, "提交邮箱验证码");
             continueURL = await this.emailOtpValidate();
+        }
+
+        if (continueURL === `${AUTH_BASE_URL}/add-phone`) {
+            this.logProgress('4-a', totalSteps, "进入短信验证流程，从接码平台获取号码");
+            if (!this.smsBroker) {
+                throw new Error("未配置 SMS provider，无法进行短信验证");
+            }
+            const lease = await this.smsBroker.getActivation();
+            this.logProgress('4-b', totalSteps, `发送短信验证码，phone=+${lease.phoneNumber}`);
+            const phoneNumber = `+${lease.phoneNumber}`
+            continueURL = await this.sendPhoneOtp(phoneNumber)
+              // sendPhoneOtp 过程中可能遇到 phone_max_usage_exceed 错误，需要手动标记失败并进行轮换
+              .catch(async (e) => {
+                  await this.smsBroker?.markAsFailed(true)
+                  throw e
+              });
+            this.logProgress('4-c', totalSteps, `等待短信验证码`);
+            const { code } = await lease.waitForVerificationCode();
+            this.logProgress('4-d', totalSteps, `提交短信验证，code=[${code}]`);
+            continueURL = await this.validatePhone(code);
         }
 
         if (continueURL === `${AUTH_BASE_URL}/sign-in-with-chatgpt/codex/consent`) {
@@ -398,6 +422,26 @@ export class OpenAIClient {
             totalSteps += 1;
             this.logProgress(step++, totalSteps, "提交邮箱验证码");
             continueURL = await this.emailOtpValidate();
+        }
+
+        if (continueURL === `${AUTH_BASE_URL}/add-phone`) {
+            if (!this.smsBroker) {
+                throw new Error("未配置 SMS provider，无法进行短信验证");
+            }
+            this.logProgress(step++, totalSteps++, "进入短信验证流程，从接码平台获取号码");
+            const lease = await this.smsBroker.getActivation();
+            this.logProgress(step++, totalSteps++, `发送短信验证码，phone=+${lease.phoneNumber}`);
+            const phoneNumber = `+${lease.phoneNumber}`
+            continueURL = await this.sendPhoneOtp(phoneNumber)
+              // sendPhoneOtp 过程中可能遇到 phone_max_usage_exceed 错误，需要手动标记失败并进行轮换
+              .catch(async (e) => {
+                  await this.smsBroker?.markAsFailed(true)
+                  throw e
+              });
+            this.logProgress(step++, totalSteps++, `等待短信验证码`);
+            const { code } = await lease.waitForVerificationCode();
+            this.logProgress(step++, totalSteps++, `提交短信验证，code=[${code}]`);
+            continueURL = await this.validatePhone(code);
         }
 
         if (continueURL === `${AUTH_BASE_URL}/about-you`) {
@@ -576,6 +620,39 @@ export class OpenAIClient {
         if (!response.ok) {
             throw new Error(
                 `EmailOtpSend请求失败: ${await this.formatErrorResponse(response)}`,
+            );
+        }
+        const payload = (await response.json()) as ContinueResponse;
+        return payload.continue_url;
+    }
+
+    async validatePhone(code: string) {
+        const response = await this.postJSON(`${AUTH_BASE_URL}/api/accounts/phone-otp/validate`,
+          { code: code },
+          { referer: `${AUTH_BASE_URL}/phone-verification` },
+        );
+        if (!response.ok) {
+            throw new Error(
+              `PhoneOtpValidate请求失败: ${await this.formatErrorResponse(response)}`,
+            );
+        }
+        const payload = (await response.json()) as ContinueResponse;
+        return payload.continue_url;
+    }
+
+    async sendPhoneOtp(phoneNumber: string) {
+        const response = await this.postJSON(
+          `${AUTH_BASE_URL}/api/accounts/add-phone/send`,
+          {
+              phone_number: phoneNumber,
+          },
+          {
+              referer: `${AUTH_BASE_URL}/add-phone`,
+          },
+        );
+        if (!response.ok) {
+            throw new Error(
+              `SendPhoneOtp请求失败: ${await this.formatErrorResponse(response)}`,
             );
         }
         const payload = (await response.json()) as ContinueResponse;
